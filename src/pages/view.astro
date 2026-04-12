@@ -1,0 +1,8 @@
+---
+import Layout from "../layouts/Layout.astro"
+import ViewerCanvas from "../components/ViewerCanvas"
+import "../styles/global.css"
+---
+<Layout title="MOSAIC — viewer">
+  <ViewerCanvas client:only="react" />
+</Layout>

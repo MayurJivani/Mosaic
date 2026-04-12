@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "'Bebas Neue'", sans-serif;
+  --font-mono: "'Space Mono'", monospace, "Courier New";
+
+  --color-canvas:      #0a0a08;
+  --color-surface:     #111110;
+  --color-border:      #2a2a26;
+  --color-accent:      #c8f04a;
+  --color-accent-dim:  #8aaa2a;
+  --color-ink:         #e8e8e0;
+  --color-muted:       #666660;
+  --color-tile:        #161614;
+  --color-danger:      #f04a4a;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a08; }
+::-webkit-scrollbar { display: none; }
+
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.055'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  pointer-events: none;
+  z-index: 9999;
+}
