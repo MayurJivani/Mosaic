@@ -1,20 +1,7 @@
-import { useRef, useState, useEffect, useCallback } from "react"
+import { useRef, useState, useEffect, useCallback, useMemo } from "react"
 import { useSync } from "../lib/useSync"
-
-function getCustomClipStyle(clip) {
-  if (clip === "full" || !clip) {
-    return { position: "absolute", width: "100%", height: "100%", left: 0, top: 0, objectFit: "cover", pointerEvents: "none" }
-  }
-  return {
-    position: "absolute",
-    width:  `${100 / clip.w}%`,
-    height: `${100 / clip.h}%`,
-    left:   `-${(clip.x / clip.w) * 100}%`,
-    top:    `-${(clip.y / clip.h) * 100}%`,
-    objectFit: "cover",
-    pointerEvents: "none",
-  }
-}
+import { getClipVideoStyle } from "../lib/clips"
+import { resolvePlaybackUrl } from "../lib/mediaUrl"
 
 function detectDevice(w, h) {
   if (h > w) return "portrait"
@@ -22,77 +9,125 @@ function detectDevice(w, h) {
   return "landscape"
 }
 
-// Read roomId from ?room=<roomId> query param
 function getRoomId() {
   return new URLSearchParams(window.location.search).get("room") ?? null
 }
 
 export default function ViewerCanvas() {
-  const [roomId]   = useState(() => getRoomId())
-  const [videoUrl, setVideoUrl]   = useState(null)
-  const [clip, setClip]           = useState("full")
-  const [deviceInfo] = useState(() => {
+  const [roomId] = useState(() => getRoomId())
+  const [videoUrl, setVideoUrl] = useState(null)
+  const [clip, setClip] = useState("full")
+  const viewerId = useMemo(
+    () =>
+      `v_${Math.random().toString(36).slice(2, 11)}${Math.random().toString(36).slice(2, 11)}`,
+    [],
+  )
+  const [deviceInfo, setDeviceInfo] = useState(() => {
     const { innerWidth: w, innerHeight: h } = window
     return { w, h, type: detectDevice(w, h) }
   })
-  const [device, setDevice]       = useState(deviceInfo.type)
   const [connected, setConnected] = useState(false)
-  const [copyDone, setCopyDone]   = useState(false)
-  const [playing, setPlaying]     = useState(false)
+  const [copyDone, setCopyDone] = useState(false)
   const videoRef = useRef(null)
+  const videoUrlRef = useRef(null)
+  videoUrlRef.current = videoUrl
 
-  // ── detect orientation ────────────────────────────────────────────────
-  useEffect(() => {
-    const update = () => {
-      const w = window.innerWidth, h = window.innerHeight
-      setDevice(detectDevice(w, h))
-    }
-    window.addEventListener("resize", update)
-    return () => window.removeEventListener("resize", update)
+  const transportRef = useRef({ playing: false, time: 0 })
+  const [transportEpoch, setTransportEpoch] = useState(0)
+
+  const bumpTransport = useCallback(() => {
+    setTransportEpoch((n) => n + 1)
   }, [])
 
-  const applyTime = useCallback((time) => {
-    if (!videoRef.current || time == null) return
-    videoRef.current.currentTime = time
+  const applyTransportToVideo = useCallback((v) => {
+    if (!v) return
+    const { playing, time } = transportRef.current
+    if (typeof time === "number" && !Number.isNaN(time))
+      v.currentTime = Math.max(0, time)
+    if (playing)
+      v.play().catch((e) => console.warn("[Mosaic viewer] play blocked:", e?.message ?? e))
+    else v.pause()
   }, [])
 
-  // ── sync ──────────────────────────────────────────────────────────────
-  useSync({
+  const { send } = useSync({
     roomId,
     host: false,
+    viewerId,
     device: deviceInfo,
     onClipUpdate: (c) => setClip(c),
     onVideoUrl: (url) => {
-      setVideoUrl(url)
+      setVideoUrl(resolvePlaybackUrl(url))
       setConnected(true)
+      bumpTransport()
     },
     onState: (state) => {
       setConnected(true)
-      if (state.videoUrl) setVideoUrl(state.videoUrl)
-      // Defer play until video is ready
-      if (state.playing) {
-        const tryPlay = () => {
-          if (!videoRef.current) return
-          applyTime(state.currentTime)
-          videoRef.current.play().catch(() => {})
-          setPlaying(true)
-        }
-        if (videoRef.current?.readyState >= 2) tryPlay()
-        else videoRef.current?.addEventListener("canplay", tryPlay, { once: true })
+      if (state.videoUrl != null) setVideoUrl(resolvePlaybackUrl(state.videoUrl))
+      transportRef.current = {
+        playing: !!state.playing,
+        time: state.currentTime ?? 0,
       }
+      bumpTransport()
     },
     onPlay: (time) => {
-      applyTime(time)
-      videoRef.current?.play().catch(() => {})
-      setPlaying(true)
+      transportRef.current = {
+        playing: true,
+        time: time ?? transportRef.current.time,
+      }
+      const v = videoRef.current
+      if (v && videoUrlRef.current) applyTransportToVideo(v)
+      bumpTransport()
     },
     onPause: (time) => {
-      applyTime(time)
-      videoRef.current?.pause()
-      setPlaying(false)
+      transportRef.current = {
+        playing: false,
+        time: time ?? transportRef.current.time,
+      }
+      const v = videoRef.current
+      if (v) {
+        if (time != null && !Number.isNaN(time)) v.currentTime = Math.max(0, time)
+        v.pause()
+      }
+      bumpTransport()
     },
-    onSeek: (time) => applyTime(time),
+    onSeek: (time) => {
+      if (time == null || Number.isNaN(time)) return
+      transportRef.current = { ...transportRef.current, time }
+      const v = videoRef.current
+      if (v) v.currentTime = Math.max(0, time)
+      bumpTransport()
+    },
   })
+
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || !videoUrl) return
+
+    const run = () => applyTransportToVideo(v)
+
+    if (v.readyState >= 2) run()
+    else {
+      const once = () => run()
+      v.addEventListener("canplay", once, { once: true })
+      v.addEventListener("loadeddata", once, { once: true })
+      return () => {
+        v.removeEventListener("canplay", once)
+        v.removeEventListener("loadeddata", once)
+      }
+    }
+  }, [videoUrl, transportEpoch, applyTransportToVideo])
+
+  useEffect(() => {
+    const update = () => {
+      const w = window.innerWidth, h = window.innerHeight
+      const type = detectDevice(w, h)
+      const next = { w, h, type }
+      setDeviceInfo(next)
+      if (roomId) send({ type: "device-update", roomId, device: next })
+    }
+    window.addEventListener("resize", update)
+    return () => window.removeEventListener("resize", update)
+  }, [roomId, send])
 
   const copyUrl = () => {
     navigator.clipboard.writeText(location.href).then(() => {
@@ -101,23 +136,23 @@ export default function ViewerCanvas() {
     })
   }
 
-  // ── render ────────────────────────────────────────────────────────────
   return (
     <div className="relative w-full h-full bg-canvas overflow-hidden">
 
-      {/* main video */}
       {videoUrl ? (
         <div className="absolute inset-0 overflow-hidden bg-black">
           <video
             ref={videoRef}
             src={videoUrl}
-            style={getCustomClipStyle(clip)}
-            loop muted playsInline
+            style={getClipVideoStyle(clip)}
+            loop
+            muted
+            playsInline
+            preload="auto"
             className="pointer-events-none"
           />
         </div>
       ) : (
-        /* waiting state */
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 select-none">
           <div className="space-y-2 text-center">
             <div
@@ -134,7 +169,6 @@ export default function ViewerCanvas() {
             <span className="w-1.5 h-1.5 rounded-full bg-border animate-pulse" />
             <span className="text-[9px] font-mono text-muted/60 tracking-wide">{roomId}</span>
           </div>
-          {/* dot grid decoration */}
           <div
             className="absolute inset-0 -z-10 pointer-events-none opacity-30"
             style={{
@@ -145,7 +179,6 @@ export default function ViewerCanvas() {
         </div>
       )}
 
-      {/* grain overlay */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
@@ -155,7 +188,6 @@ export default function ViewerCanvas() {
         }}
       />
 
-      {/* top HUD */}
       <div className="absolute top-4 left-4 right-4 z-20 flex items-start justify-between pointer-events-none">
         <div>
           <div className="font-display text-xl text-accent tracking-widest leading-none">MOSAIC</div>
@@ -168,20 +200,19 @@ export default function ViewerCanvas() {
             {connected ? "● live" : "○ connecting"}
           </span>
           <span className="text-[7px] font-mono text-muted/50 tracking-wide">
-            {device}
+            {deviceInfo.type}
           </span>
         </div>
       </div>
 
-      {/* share url — top right below status */}
       <button
+        type="button"
         onClick={copyUrl}
         className="absolute right-4 z-20 text-[7px] font-mono tracking-widest text-muted hover:text-accent transition-colors bg-surface/60 border border-border/60 px-2 py-1 rounded-sm backdrop-blur-sm"
         style={{ top: "4.5rem" }}
       >
         {copyDone ? "✓ copied" : "share viewer link"}
       </button>
-      {/* no more manual clip picker */}
     </div>
   )
 }

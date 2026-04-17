@@ -7,30 +7,44 @@ import Toolbar from "./Toolbar"
 
 // Per-node sync hook wrapper — each node is its own room
 import { useSync } from "../lib/useSync"
+import { resolveClip } from "../lib/clips"
+import { stripToRelayPath } from "../lib/mediaUrl"
 
-// One sync channel per node id
 const syncChannels = new Map()
 
-function getOrCreateSync(nodeId, roomId, setNodes) {
-  // We manage this outside React — just a registry
-  // Actual hooks are called inside NodeSyncBridge
+/** World-space rect of the 16:9 preview inside VideoNode (must match VideoNode layout). */
+const SOURCE_PREVIEW = { insetX: 12, insetY: 56, w: 200, h: 112.5 }
+
+function clipRectForTileOnSource(tileX, tileY, tileW, tileH, nodeX, nodeY) {
+  const vx = nodeX + SOURCE_PREVIEW.insetX
+  const vy = nodeY + SOURCE_PREVIEW.insetY
+  const { w: vw, h: vh } = SOURCE_PREVIEW
+  return {
+    x: (tileX - vx) / vw,
+    y: (tileY - vy) / vh,
+    w: tileW / vw,
+    h: tileH / vh,
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NodeSyncBridge: a tiny component that mounts one useSync per node
 // ─────────────────────────────────────────────────────────────────────────────
-function NodeSyncBridge({ node, videoRef, connections, tileVideoRefs, onViewers }) {
+function NodeSyncBridge({ node, onViewers }) {
   const { broadcast, broadcastUrl, sendClip } = useSync({
     roomId: node.roomId,
     host: true,
-    onViewersUpdate: (viewers) => onViewers(node.id, viewers)
+    onViewersUpdate: (viewers) => onViewers(node.id, viewers),
   })
 
-  // Expose broadcast on a shared registry so MosaicCanvas can call it
   useEffect(() => {
     syncChannels.set(node.id, { broadcast, broadcastUrl, sendClip })
     return () => syncChannels.delete(node.id)
   }, [node.id, broadcast, broadcastUrl, sendClip])
+
+  useEffect(() => {
+    if (node.url) broadcastUrl(stripToRelayPath(node.url))
+  }, [node.url, broadcastUrl])
 
   return null
 }
@@ -51,6 +65,8 @@ export default function MosaicCanvas() {
   const canvasRef      = useRef(null)
   const videoRefs      = useRef({})
   const tileVideoRefs  = useRef({})
+  /** Latest world (x,y) while dragging — React state can lag one frame behind pointer on mouseup. */
+  const dragLiveRef    = useRef(null)
 
   // ── world → screen ──────────────────────────────────────────────────────
   const toScreen = (wx, wy) => ({ x: wx * zoom + pan.x, y: wy * zoom + pan.y })
@@ -84,21 +100,51 @@ export default function MosaicCanvas() {
   const handleViewersUpdate = useCallback((nodeId, viewers) => {
     const src = nodes.find((n) => n.id === nodeId)
     setTiles((p) => {
-      const newTiles = [...p]
       let changed = false
-      viewers.forEach(v => {
-        if (!newTiles.find(t => t.viewerId === v.id)) {
+      const withUpdates = p.map((t) => {
+        if (!t.viewerId) return t
+        const v = viewers.find((vi) => vi.id === t.viewerId)
+        if (!v?.device) return t
+        const d = v.device
+        const nextH = 160 * (d.h / d.w)
+        const dev = t.viewerDevice
+        if (
+          !dev ||
+          dev.w !== d.w ||
+          dev.h !== d.h ||
+          dev.type !== d.type ||
+          Math.abs((t.h ?? 0) - nextH) > 0.5
+        ) {
+          changed = true
+          return { ...t, viewerDevice: d, h: nextH }
+        }
+        return t
+      })
+      const newTiles = [...withUpdates]
+      viewers.forEach((v) => {
+        if (!newTiles.find((t) => t.viewerId === v.id)) {
+          const tw = 160
+          const th = 160 * (v.device.h / v.device.w)
+          const tx = (src?.x ?? 300) + 260 + Math.random() * 40
+          const ty = (src?.y ?? 60) + Math.random() * 40
+          const clipData = src
+            ? clipRectForTileOnSource(tx, ty, tw, th, src.x, src.y)
+            : { x: 0, y: 0, w: 1, h: 1 }
           newTiles.push({
-            id: v.id, // sync id
+            id: v.id,
             viewerId: v.id,
             viewerDevice: v.device,
-            x: (src?.x ?? 300) + 260 + Math.random() * 40,
-            y: (src?.y ?? 60)  + Math.random() * 40,
-            w: 160,
-            h: 160 * (v.device.h / v.device.w),
-            clip: "full",
+            x: tx,
+            y: ty,
+            w: tw,
+            h: th,
+            clip: clipData,
           })
           changed = true
+          queueMicrotask(() => {
+            const ch = syncChannels.get(nodeId)
+            if (ch) ch.sendClip(v.id, clipData)
+          })
         }
       })
       return changed ? newTiles : p
@@ -117,11 +163,7 @@ export default function MosaicCanvas() {
   }, [nodes])
 
   const onVideoLoaded = useCallback((nodeId, url, name) => {
-    setNodes((p) => p.map((n) => n.id === nodeId ? { ...n, url, name } : n))
-    // Broadcast url to all viewers of this room
-    setTimeout(() => {
-      syncChannels.get(nodeId)?.broadcastUrl(url)
-    }, 100)
+    setNodes((p) => p.map((n) => (n.id === nodeId ? { ...n, url, name } : n)))
   }, [])
 
   // ── play / pause (synced) ───────────────────────────────────────────────
@@ -158,6 +200,7 @@ export default function MosaicCanvas() {
       ? nodes.find((n) => n.id === id)
       : tiles.find((t) => t.id === id)
     if (!item) return
+    dragLiveRef.current = { type, id, x: item.x, y: item.y }
     setDrag({ type, id, sx: e.clientX, sy: e.clientY, ox: item.x, oy: item.y })
     if (type === "node") { setSelectedNode(id); setSelectedTile(null) }
     else                  { setSelectedTile(id); setSelectedNode(null) }
@@ -186,41 +229,71 @@ export default function MosaicCanvas() {
     if (!drag) return
     const dx = (e.clientX - drag.sx) / zoom
     const dy = (e.clientY - drag.sy) / zoom
+    const nx = drag.ox + dx
+    const ny = drag.oy + dy
+    dragLiveRef.current = { type: drag.type, id: drag.id, x: nx, y: ny }
     if (drag.type === "node")
-      setNodes((p) => p.map((n) => n.id === drag.id ? { ...n, x: drag.ox + dx, y: drag.oy + dy } : n))
+      setNodes((p) => p.map((n) => n.id === drag.id ? { ...n, x: nx, y: ny } : n))
     else
-      setTiles((p) => p.map((t) => t.id === drag.id ? { ...t, x: drag.ox + dx, y: drag.oy + dy } : t))
+      setTiles((p) => p.map((t) => t.id === drag.id ? { ...t, x: nx, y: ny } : t))
   }, [drag, resize, panning, zoom])
 
   const onMouseUp   = useCallback(() => { 
-    if (drag && drag.type === "tile") {
-      const tile = tiles.find(t => t.id === drag.id)
-      const conn = connections.find(c => c.tileId === tile.id)
+    const live = dragLiveRef.current
+    if (drag?.type === "tile" && live?.type === "tile" && live.id === drag.id) {
+      const tile = tiles.find((t) => t.id === drag.id)
+      const conn = tile && connections.find((c) => c.tileId === tile.id)
       if (tile && conn && tile.viewerId) {
-        const node = nodes.find(n => n.id === conn.nodeId)
+        const node = nodes.find((n) => n.id === conn.nodeId)
         if (node) {
-          // Bounding box of Video thumbnail in standard layout
-          const vx = node.x + 12
-          const vy = node.y + 56
-          const vw = 200
-          const vh = 112.5
-          
-          const cx = (tile.x - vx) / vw
-          const cy = (tile.y - vy) / vh
-          const cw = tile.w / vw
-          const ch = tile.h / vh
-
-          // Construct an accurate float rect
-          const clipData = { x: cx, y: cy, w: cw, h: ch }
-          
-          // Send to viewer via sync channel
+          const clipData = clipRectForTileOnSource(
+            live.x,
+            live.y,
+            tile.w,
+            tile.h,
+            node.x,
+            node.y,
+          )
           const channel = syncChannels.get(node.id)
           if (channel) channel.sendClip(tile.viewerId, clipData)
-
-          setTiles(p => p.map(t => t.id === tile.id ? { ...t, clip: clipData } : t))
+          setTiles((p) =>
+            p.map((t) => (t.id === tile.id ? { ...t, clip: clipData } : t)),
+          )
         }
       }
     }
+    if (drag?.type === "node" && live?.type === "node" && live.id === drag.id) {
+      const nodeId = drag.id
+      const nx = live.x
+      const ny = live.y
+      const channel = syncChannels.get(nodeId)
+      const clipByTileId = new Map()
+      connections
+        .filter((c) => c.nodeId === nodeId)
+        .forEach((c) => {
+          const tile = tiles.find((t) => t.id === c.tileId)
+          if (!tile?.viewerId) return
+          const clipData = clipRectForTileOnSource(
+            tile.x,
+            tile.y,
+            tile.w,
+            tile.h,
+            nx,
+            ny,
+          )
+          clipByTileId.set(tile.id, clipData)
+          channel?.sendClip(tile.viewerId, clipData)
+        })
+      if (clipByTileId.size) {
+        setTiles((p) =>
+          p.map((t) => {
+            const cd = clipByTileId.get(t.id)
+            return cd ? { ...t, clip: cd } : t
+          }),
+        )
+      }
+    }
+    dragLiveRef.current = null
     setDrag(null)
     setResize(null)
     setPanning(false) 
@@ -288,8 +361,19 @@ export default function MosaicCanvas() {
     if (selectedTile === id) setSelectedTile(null)
   }
 
-  const setTileClip = (tileId, clip) =>
-    setTiles((p) => p.map((t) => t.id === tileId ? { ...t, clip } : t))
+  const setTileClip = useCallback(
+    (tileId, clip) => {
+      const tile = tiles.find((t) => t.id === tileId)
+      const conn = connections.find((c) => c.tileId === tileId)
+      const node = conn ? nodes.find((n) => n.id === conn.nodeId) : null
+      if (tile?.viewerId && node) {
+        const rect = resolveClip(clip)
+        syncChannels.get(node.id)?.sendClip(tile.viewerId, rect)
+      }
+      setTiles((p) => p.map((t) => (t.id === tileId ? { ...t, clip } : t)))
+    },
+    [tiles, connections, nodes],
+  )
 
   const getVideoUrl = (tileId) => {
     const c = connections.find((c) => c.tileId === tileId)
@@ -320,14 +404,7 @@ export default function MosaicCanvas() {
     >
       {/* Per-node WebSocket sync bridge (renders nothing) */}
       {nodes.map((node) => (
-        <NodeSyncBridge
-          key={node.id}
-          node={node}
-          videoRef={videoRefs.current[node.id]}
-          connections={connections}
-          tileVideoRefs={tileVideoRefs}
-          onViewers={handleViewersUpdate}
-        />
+        <NodeSyncBridge key={node.id} node={node} onViewers={handleViewersUpdate} />
       ))}
 
       {/* dot grid */}

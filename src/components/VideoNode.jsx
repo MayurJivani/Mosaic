@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useRef, useState, useEffect } from "react"
 import { useUpload } from "../lib/useUpload"
 
 export default function VideoNode({
@@ -10,6 +10,20 @@ export default function VideoNode({
   const [playing, setPlaying] = useState(false)
   const internalRef = useRef(null)
 
+  useEffect(() => {
+    const el = internalRef.current
+    if (!el) return
+    const onPlay = () => setPlaying(true)
+    const onPause = () => setPlaying(false)
+    el.addEventListener("play", onPlay)
+    el.addEventListener("pause", onPause)
+    setPlaying(!el.paused)
+    return () => {
+      el.removeEventListener("play", onPlay)
+      el.removeEventListener("pause", onPause)
+    }
+  }, [node.url])
+
   const handleFile = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -19,7 +33,6 @@ export default function VideoNode({
 
   const handleTogglePlay = (ev) => {
     ev.stopPropagation()
-    setPlaying((p) => !p)
     onTogglePlay()
   }
 
