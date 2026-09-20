@@ -1,17 +1,16 @@
-# mosaic.futile.studio
+# mosaic.futile.studio — one relay, one reverse proxy.
 #
-# Caddy terminates TLS and proxies everything — including the WebSocket, which
-# it upgrades automatically — to the relay on one origin.
+# The relay serves the mod board, the OBS overlay and the WebSocket from a
+# single origin, so there is no second service and no cross-origin cookie.
 services:
   mosaic:
     build: .
     restart: unless-stopped
     environment:
-      MOSAIC_PORT: "4322"
-      # Uploads are streamed, but the ceiling still has to exist.
-      MOSAIC_MAX_UPLOAD_BYTES: "536870912"   # 512 MB
+      PORT: "4322"
+      MOSAIC_MAX_UPLOAD_BYTES: "536870912" # 512 MB, matches the Caddyfile
     volumes:
-      # Without this, a redeploy erases every mod's clip library.
+      # Without this a redeploy erases every mod's clip library.
       - mosaic-uploads:/app/uploads
     expose:
       - "4322"
@@ -24,7 +23,7 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
+      - caddy-data:/data     # certificates — losing this re-issues on every deploy
       - caddy-config:/config
     depends_on:
       - mosaic

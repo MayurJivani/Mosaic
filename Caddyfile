@@ -1,19 +1,23 @@
-# mosaic.futile.studio — TLS, WebSocket upgrade and large uploads.
+# mosaic.futile.studio
+#
+# Caddy terminates TLS and reverse-proxies everything to the relay — including
+# the WebSocket, which it upgrades on its own. Certificates are fetched and
+# renewed automatically on first request.
 #
 # HTTPS is not optional here: Twitch refuses to embed into an insecure page, and
-# the mod session cookie is SameSite=Lax over a single origin. Caddy fetches and
-# renews the certificate on its own.
+# the mod session cookie is SameSite=Lax on a single origin.
 
 mosaic.futile.studio {
 	encode zstd gzip
 
-	# Clips and sounds can be large, and the relay enforces its own ceiling.
+	# Clips and sounds get large. The relay enforces its own ceiling too
+	# (MOSAIC_MAX_UPLOAD_BYTES); keep the two in step.
 	request_body {
 		max_size 512MB
 	}
 
-	# reverse_proxy upgrades WebSockets automatically — no extra config needed.
 	reverse_proxy mosaic:4322 {
+		# Long-lived WebSockets must not sit in a response buffer.
 		flush_interval -1
 	}
 }

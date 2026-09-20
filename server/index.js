@@ -32,7 +32,9 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { WebSocketServer } from "ws"
 
-const PORT = Number(process.env.MOSAIC_PORT ?? 4322)
+// PORT is what every PaaS injects (Coolify included); MOSAIC_PORT stays as the
+// explicit override for running several rooms' relays side by side locally.
+const PORT = Number(process.env.MOSAIC_PORT ?? process.env.PORT ?? 4322)
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const DIST = path.join(ROOT, "dist")
 const UPLOAD_DIR = path.resolve(process.env.MOSAIC_UPLOAD_DIR ?? path.join(ROOT, "uploads"))

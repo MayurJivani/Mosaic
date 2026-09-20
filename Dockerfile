@@ -1,36 +1,47 @@
-# Mosaic — one image, one process, one origin.
-# The relay serves the built board and overlay and runs the WebSocket, so there
-# is no second service to deploy and no cross-origin cookie problem.
-
-FROM node:22-alpine AS build
+FROM node:22-alpine AS builder
 WORKDIR /app
-COPY package*.json ./
+
+# A NODE_ENV=production inherited from the build environment would skip
+# devDependencies and leave Astro unable to build. Pin development here; the
+# runtime stage sets production below.
+ENV NODE_ENV=development
+
+COPY package.json package-lock.json ./
 RUN npm ci
-COPY . .
+
+COPY astro.config.mjs tsconfig.json ./
+COPY src/ src/
+COPY public/ public/
 RUN npm run build
+
+RUN npm prune --omit=dev
 
 FROM node:22-alpine
 WORKDIR /app
-ENV NODE_ENV=production
 
-# Only the relay's own dependency (ws) is needed at runtime; the board and the
-# overlay ship as static files in dist/.
-COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# tini reaps the zombies a long-lived WebSocket process would otherwise collect,
+# and forwards SIGTERM so redeploys close sockets instead of dropping them.
+RUN apk add --no-cache tini
 
-COPY --from=build /app/dist ./dist
-COPY server ./server
+COPY --from=builder /app/package.json /app/package-lock.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY server/ server/
 
-# Uploaded clips, images and sounds. Mount a volume here or a redeploy wipes
-# every mod's clip library.
+# Uploaded clips, images and sounds. compose mounts a named volume here —
+# without it a redeploy erases every mod's clip library, since the relay serves
+# uploads straight off disk.
 RUN mkdir -p /app/uploads && chown -R node:node /app
 VOLUME ["/app/uploads"]
 
 USER node
+
+ENV NODE_ENV=production
+ENV PORT=4322
 EXPOSE 4322
-ENV MOSAIC_PORT=4322
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.MOSAIC_PORT||4322)+'/net').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4322)+'/net').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
+ENTRYPOINT ["tini", "--"]
 CMD ["node", "server/index.js"]

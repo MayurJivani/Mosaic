@@ -69,7 +69,7 @@ const labelStyle = {
 
 const focusInput = (e) => {
   e.target.style.borderColor = "#c8f04a"
-  e.target.style.boxShadow = "0 0 0 3px rgba(92,229,213,0.12)"
+  e.target.style.boxShadow = "0 0 0 3px rgba(200, 240, 74,0.12)"
 }
 const blurInput = (e) => {
   e.target.style.borderColor = "#2A2F40"
@@ -886,7 +886,7 @@ export default function EditorBoard() {
               top: frame.y,
               width: frame.w,
               height: frame.h,
-              border: "1px solid rgba(92,229,213,0.2)",
+              border: "1px solid rgba(200, 240, 74,0.2)",
               boxShadow: "0 0 0 1px rgba(0,0,0,0.5)",
             }}
           >
@@ -896,7 +896,7 @@ export default function EditorBoard() {
               left: 4,
               fontSize: 8,
               fontFamily: "var(--font-mono)",
-              color: "rgba(92,229,213,0.5)",
+              color: "rgba(200, 240, 74,0.5)",
               letterSpacing: "0.12em",
               pointerEvents: "none",
             }}>

@@ -40,7 +40,7 @@ const pillBtn = (active) => ({
   fontFamily: "var(--font-mono)",
   borderRadius: 12,
   border: active ? "1px solid #c8f04a" : "1px solid #2A2F40",
-  background: active ? "rgba(92,229,213,0.1)" : "none",
+  background: active ? "rgba(200, 240, 74,0.1)" : "none",
   color: active ? "#c8f04a" : "#8B90A0",
   cursor: "pointer",
   whiteSpace: "nowrap",

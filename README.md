@@ -1,126 +1,146 @@
-# MOSAIC
+<div align="center">
 
-**Mod-controlled stream overlay.** Your mods drag GIFs, clips, sounds, emotes and
-text onto a shared board, and it lands on stream instantly — while you keep
-playing.
+<h1 align="center">Mosaic</h1>
 
-One page goes in OBS as a browser source. Another is the mod board. Anyone
-holding the mod link can move things; the overlay only ever draws.
+### _A live overlay your mods control._
 
-```sh
+**[▶ mosaic.futile.studio](https://mosaic.futile.studio)**
+
+</div>
+
+<br>
+
+> _For the streamer with both hands on the controller. For the mod who saw the bit before anyone else and had nowhere to put it. Drag the emote on, drop the airhorn, pull it back off — all of it live, none of it yours to babysit._
+
+---
+
+## 🎛 What your mods get
+
+One page goes in OBS as a browser source. The other is the mod board. Anyone with
+the mod link can move things; the overlay only ever draws.
+
+| | |
+| :-- | :-- |
+| **Emotes** | Twitch, BTTV, 7TV and FFZ — global or your channel's |
+| **GIFs & images** | Drag on, drop anywhere |
+| **Clips** | Muted looping video |
+| **Sounds** | A soundboard fired at the stream on cue |
+| **Text** | Colour, size, bold — callouts and bits |
+| **Transforms** | Rotate, flip, fade, blur, re-stack |
+| **Layers** | Rename, lock, hide, reorder |
+| **Library** | Everything uploaded, reusable in one click |
+| **Mod chat** | Coordination that never touches the stream |
+
+Scroll to zoom, drag to pan, `Del` to remove, `Esc` to deselect.
+
+---
+
+## 📺 Placing things against the real frame
+
+Pick **Twitch** or **YouTube**, enter the channel, and the player is layered
+*under* the overlay in the preview. Mods position things against what is actually
+on screen instead of a black rectangle. Every mod sees the same stream.
+
+Audio starts muted — browsers refuse to autoplay sound. Hit the speaker to
+unmute; volume applies when you let go of the slider. The **overlay** slider
+fades only the overlay layer, so you can check what's underneath.
+
+> **Twitch will not embed on an IP address.** It needs `parent` to be a real
+> hostname, so use `localhost` or a domain — on a LAN IP the player stays blank.
+> The panel says so when it spots this.
+
+---
+
+## 🔒 Two rules this holds to
+
+**The OBS overlay never carries the stream or its audio.** OBS already composites
+the overlay over your scene. Pulling the broadcast into the overlay would put the
+stream inside its own stream, with an audio loop to match.
+
+**The overlay is the least trusted peer in the room.** OBS opens it with nothing
+but a room id, and that URL is effectively public. It receives the widgets it has
+to draw — never the clip library, never the connected channel — and it can never
+write anything back.
+
+Hiding a layer with the eye **removes it from the stream**, not just from your
+board. It's a moderation control, so it has to actually pull things off air.
+Sounds are the exception: no visual, so hiding one leaves its trigger working.
+
+Room codes are compared in constant time, joins are rate limited per IP, uploads
+are capped and sandboxed to one directory, and every widget is re-sanitised on
+the relay before it reaches anyone.
+
+---
+
+## 🎧 Sound check
+
+```bash
 npm install
 npm run build
 npm run dev:relay        # http://localhost:4322
 ```
 
-Open the board, hit **Start a show**, then hand out the two links it gives you:
-the **OBS overlay** URL for your browser source, and the **mod link** for your mods.
+Hit **Start a show**, then hand out the two links it gives you — the **OBS
+overlay** URL for your browser source, and the **mod link** for your mods.
 
----
-
-## What mods can do
-
-| | |
+| Script | What it does |
 | :-- | :-- |
-| **Text** | Colour, size, bold — for callouts and bits |
-| **Emotes** | Twitch, BTTV, 7TV and FFZ, global or your channel's |
-| **GIFs / images** | Drag on, drop anywhere |
-| **Clips** | Muted looping video |
-| **Sounds** | A soundboard fired at the stream on cue |
-| **Transforms** | Rotate, flip, fade, blur, re-stack |
-| **Layers** | Rename, lock, hide, reorder |
-| **Library** | Everything uploaded, reusable in one click |
-| **Chat** | Mod-to-mod, never touches the stream |
-
-Scroll to zoom, drag the canvas to pan, `Del` to remove, `Esc` to deselect.
+| `dev` | relay + Astro, watch mode |
+| `dev:relay` | relay alone, serving `dist/` |
+| `build` | production build |
+| `test` | full suite — protocol, access rules, rendering |
 
 ---
 
-## The stream preview
+## 🚀 Deploy
 
-Pick **Twitch** or **YouTube** and enter the channel. The player is layered
-*under* the overlay in the preview, so mods place things against the real frame
-instead of a black rectangle. Every mod sees the same stream.
+One container behind Caddy. The relay serves the board, the overlay and the
+WebSocket together, so there's no second service and no cross-origin cookie
+problem.
 
-Audio starts muted — browsers refuse to autoplay sound. Hit the speaker to
-unmute; volume applies when you let go of the slider. The **overlay** slider
-fades only the overlay layer, so you can see what's underneath.
-
-> **Twitch will not embed on an IP address.** It requires `parent` to be a real
-> hostname, so use `localhost` or a domain — on a LAN IP the player stays blank.
-> The panel warns you when it spots this.
-
----
-
-## Two rules this holds to
-
-**The OBS overlay never carries the stream or its audio.** OBS already
-composites the overlay over your scene; pulling the broadcast into the overlay
-would put the stream inside its own stream, with an audio loop to match.
-
-**The overlay is the least trusted peer in the room.** OBS opens it with nothing
-but a room id, and that URL is effectively public. It receives the widgets it
-has to draw — never the clip library, never the connected channel — and it can
-never write anything back.
-
-Hiding a layer with the eye icon **removes it from the stream**, not just from
-your board. It's a moderation control, so it has to actually pull things off
-air. Sounds are the exception: they have no visual, so hiding one leaves its
-trigger working.
-
----
-
-## Deploying to mosaic.futile.studio
-
-One container, one origin. The relay serves the board, the overlay and the
-WebSocket, so there's no second service and no cross-origin cookie problem.
-
-```sh
+```bash
 docker compose up -d --build
 ```
 
-Point `mosaic.futile.studio` at the host's public IP with an `A` record and
-Caddy fetches the certificate on first request. **HTTPS isn't optional** —
-Twitch refuses to embed into an insecure page, and the mod session cookie is
-`SameSite=Lax` on a single origin.
+Point `mosaic.futile.studio` at the host with an `A` record — Caddy fetches the
+certificate on first request and upgrades the WebSocket on its own.
 
-Uploads live on the `mosaic-uploads` volume. Without it, a redeploy erases every
-mod's clip library.
+**HTTPS isn't optional.** Twitch refuses to embed into an insecure page, and the
+mod session cookie is `SameSite=Lax` on a single origin.
 
-### Tuning
+Two volumes matter: `mosaic-uploads` holds the clip library, and `caddy-data`
+holds the certificates. Lose the first and every mod's library is gone; lose the
+second and you re-issue certs on every deploy.
 
 | Variable | Default | |
 | :-- | :-- | :-- |
-| `MOSAIC_PORT` | `4322` | Relay port |
-| `MOSAIC_MAX_UPLOAD_BYTES` | 2 GB | Per-file ceiling |
-| `MOSAIC_MAX_JOIN_RATE` | 20 / 10s / IP | Makes brute-forcing a room code pointless |
+| `PORT` | `4322` | Relay port |
+| `MOSAIC_MAX_UPLOAD_BYTES` | 2 GB | Per-file ceiling — keep in step with the Caddyfile |
+| `MOSAIC_MAX_JOIN_RATE` | 20 / 10s / IP | Makes guessing a room code pointless |
 | `MOSAIC_MAX_WIDGETS` | 400 | Per room |
 | `MOSAIC_MAX_ASSETS` | 500 | Library entries per room |
 | `MOSAIC_UPLOAD_DIR` | `./uploads` | Where files land |
 
 ---
 
-## Commands
-
-| | |
-| :-- | :-- |
-| `npm run dev` | Relay + Astro with hot reload |
-| `npm run dev:relay` | Relay alone, serving `dist/` |
-| `npm run build` | Build the board and overlay |
-| `npm test` | Full suite — protocol, security, rendering |
-
----
-
-## How it fits together
+## 🧩 How it fits together
 
 ```
 mod board  ──┐
-mod board  ──┼──  relay (rooms, widgets, library, uploads)  ──►  OBS overlay
-mod board  ──┘                                                   (draw only)
+mod board  ──┼──  relay (rooms · widgets · library · uploads)  ──►  OBS overlay
+mod board  ──┘                                                      (draw only)
 ```
 
-Rooms own the state. Mods mutate it; the overlay renders it. Everything survives
+Rooms own the state. Mods mutate it, the overlay renders it. Everything survives
 a reload on either side — OBS refreshes browser sources constantly, and a mod
 dropping off wifi rejoins to exactly what they left.
 
-Built by [futile.studio](https://futile.studio).
+Astro · React · WebSockets · no database.
+
+---
+
+<div align="center">
+
+Built by [futile.studio](https://futile.studio)
+
+</div>
