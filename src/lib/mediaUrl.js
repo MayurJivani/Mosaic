@@ -4,20 +4,34 @@
  * need the same path resolved against *their* page hostname (or PUBLIC_WS_URL).
  */
 
+const RELAY_PORT = 4322
+
 function wsUrlToHttp(wsUrl) {
   if (wsUrl.startsWith("wss://")) return "https://" + wsUrl.slice(6)
   if (wsUrl.startsWith("ws://")) return "http://" + wsUrl.slice(5)
   return wsUrl
 }
 
-/** HTTP origin of the Mosaic server (upload + /files). */
+function httpUrlToWs(httpUrl) {
+  if (httpUrl.startsWith("https://")) return "wss://" + httpUrl.slice(8)
+  if (httpUrl.startsWith("http://")) return "ws://" + httpUrl.slice(7)
+  return httpUrl
+}
+
+/** HTTP origin of the Mosaic relay (upload + /files + /net). */
 export function getFileServerOrigin() {
-  if (import.meta.env.PUBLIC_WS_URL) {
-    return wsUrlToHttp(import.meta.env.PUBLIC_WS_URL)
+  if (import.meta.env?.PUBLIC_WS_URL) return wsUrlToHttp(import.meta.env.PUBLIC_WS_URL)
+  if (typeof window !== "undefined") {
+    // Match the page's scheme so an https tunnel doesn't trip mixed-content blocking.
+    const scheme = window.location.protocol === "https:" ? "https" : "http"
+    return `${scheme}://${window.location.hostname}:${RELAY_PORT}`
   }
-  if (typeof window !== "undefined")
-    return `http://${window.location.hostname}:4322`
-  return "http://localhost:4322"
+  return `http://localhost:${RELAY_PORT}`
+}
+
+export function getWsUrl() {
+  if (import.meta.env?.PUBLIC_WS_URL) return import.meta.env.PUBLIC_WS_URL
+  return httpUrlToWs(getFileServerOrigin())
 }
 
 /**
@@ -28,8 +42,7 @@ export function getFileServerOrigin() {
 export function stripToRelayPath(url) {
   if (!url || url.startsWith("blob:")) return url
   try {
-    const base = getFileServerOrigin()
-    const u = new URL(url, base)
+    const u = new URL(url, getFileServerOrigin())
     if (u.pathname.startsWith("/files/")) return u.pathname + u.search
   } catch {
     /* ignore */
@@ -44,8 +57,7 @@ export function resolvePlaybackUrl(url) {
   if (url.startsWith("/")) return getFileServerOrigin() + url
   try {
     const u = new URL(url)
-    if (u.pathname.startsWith("/files/"))
-      return getFileServerOrigin() + u.pathname + u.search
+    if (u.pathname.startsWith("/files/")) return getFileServerOrigin() + u.pathname + u.search
     return url
   } catch {
     return url

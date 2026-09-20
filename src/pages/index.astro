@@ -1,12 +1,8 @@
 ---
 import Layout from "../layouts/Layout.astro"
-import MosaicCanvas from "../components/MosaicCanvas"
+import EditorBoard from "../components/EditorBoard"
 import "../styles/global.css"
 ---
-<Layout title="MOSAIC — Futile Studio">
-  <div class="font-display text-2xl text-accent tracking-widest leading-none fixed top-5 left-5 z-50 pointer-events-none">
-    MOSAIC
-    <span class="block text-[9px] font-mono text-muted tracking-[0.2em] mt-0.5">by futile.studio</span>
-  </div>
-  <MosaicCanvas client:only="react" />
+<Layout title="MOSAIC — Stream Overlay & Mod Board">
+  <EditorBoard client:only="react" />
 </Layout>

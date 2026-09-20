@@ -1,127 +1,147 @@
-import { useEffect, useRef, useCallback } from "react"
-
-const WS_URL = import.meta.env.PUBLIC_WS_URL
-  ? import.meta.env.PUBLIC_WS_URL
-  : typeof window !== "undefined"
-    ? `ws://${window.location.hostname}:4322`
-    : "ws://localhost:4322"
+import { useEffect, useRef, useCallback, useState } from "react"
+import { getWsUrl } from "./mediaUrl"
 
 /**
+ * One WebSocket per room, joined as a mod editor or as the read-only overlay.
+ * Reconnects on its own — a mod drops off wifi or the streamer reloads OBS and
+ * everything comes back without anyone walking over to tap it.
+ *
  * @param {object} opts
  * @param {string}   opts.roomId
- * @param {boolean}  [opts.host]
- * @param {string}   [opts.viewerId]  – stable id for viewers (reconnect / duplicate tab)
- * @param {Function} [opts.onPlay]
- * @param {Function} [opts.onPause]
- * @param {Function} [opts.onSeek]
- * @param {Function} [opts.onVideoUrl]
- * @param {Function} [opts.onState]
- * @param {Function} [opts.onViewersUpdate]
- * @param {Function} [opts.onClipUpdate]
- * @param {object}   [opts.device]
+ * @param {string}   opts.role     – "editor" (needs code) or "overlay"
+ * @param {string}   [opts.code]   – room token for editors
+ * @param {string}   [opts.nickname] – display name for chat
+ * @param {Function} [opts.onState]       – { widgets, canvasW, canvasH } on join
+ * @param {Function} [opts.onWidgetPut]   – one widget upserted/broadcast
+ * @param {Function} [opts.onWidgetDel]   – one widget removed
+ * @param {Function} [opts.onWidgetReorder] – bulk z-index update
+ * @param {Function} [opts.onClearAll]    – all widgets cleared
+ * @param {Function} [opts.onPlaySound]   – overlay: play this sound widget now
+ * @param {Function} [opts.onChat]        – chat message received
+ * @param {Function} [opts.onAssetPut]    – clip library entry added
+ * @param {Function} [opts.onAssetDel]    – clip library entry removed
+ * @param {Function} [opts.onStreamSet]   – which live stream the board previews
  */
-export function useSync({
+export function useRoom({
   roomId,
-  host = false,
-  viewerId,
-  device,
-  onPlay,
-  onPause,
-  onSeek,
-  onVideoUrl,
+  role,
+  code,
+  nickname,
   onState,
-  onViewersUpdate,
-  onClipUpdate,
+  onWidgetPut,
+  onWidgetDel,
+  onWidgetReorder,
+  onClearAll,
+  onPlaySound,
+  onChat,
+  onAssetPut,
+  onAssetDel,
+  onStreamSet,
 }) {
   const wsRef = useRef(null)
-  const handlersRef = useRef({
-    onPlay,
-    onPause,
-    onSeek,
-    onVideoUrl,
-    onState,
-    onViewersUpdate,
-    onClipUpdate,
-  })
-  const deviceRef = useRef(device)
-  const viewerIdRef = useRef(viewerId)
+  const [connected, setConnected] = useState(false)
 
-  handlersRef.current = {
-    onPlay,
-    onPause,
-    onSeek,
-    onVideoUrl,
-    onState,
-    onViewersUpdate,
-    onClipUpdate,
-  }
-  deviceRef.current = device
-  viewerIdRef.current = viewerId
+  const handlersRef = useRef({})
+  handlersRef.current = { onState, onWidgetPut, onWidgetDel, onWidgetReorder, onClearAll, onPlaySound, onChat, onAssetPut, onAssetDel, onStreamSet }
+
+  const roleRef = useRef(role)
+  const codeRef = useRef(code)
+  const nicknameRef = useRef(nickname)
+  roleRef.current = role
+  codeRef.current = code
+  nicknameRef.current = nickname
 
   useEffect(() => {
     if (!roomId) return
 
-    const ws = new WebSocket(WS_URL)
-    wsRef.current = ws
+    let closed = false
+    let retry = null
+    let attempt = 0
+    let ping = null
 
-    ws.onopen = () => {
-      const payload = {
-        type: "join",
-        roomId,
-        host,
-        device: deviceRef.current,
+    const connect = () => {
+      if (closed) return
+      const ws = new WebSocket(getWsUrl())
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        attempt = 0
+        setConnected(true)
+        const payload = { type: "join", roomId, role: roleRef.current }
+        if (codeRef.current) payload.code = codeRef.current
+        if (nicknameRef.current) payload.nickname = nicknameRef.current
+        ws.send(JSON.stringify(payload))
+        ping = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }))
+        }, 25_000)
       }
-      if (!host && viewerIdRef.current)
-        payload.viewerId = viewerIdRef.current
-      ws.send(JSON.stringify(payload))
+
+      ws.onmessage = (e) => {
+        let msg
+        try {
+          msg = JSON.parse(e.data)
+        } catch {
+          return
+        }
+        if (!msg || typeof msg !== "object") return
+        const h = handlersRef.current
+        switch (msg.type) {
+          case "state":           h.onState?.(msg); break
+          case "widget-put":      h.onWidgetPut?.(msg.widget); break
+          case "widget-del":      h.onWidgetDel?.(msg.id); break
+          case "widget-reorder":  h.onWidgetReorder?.(msg.order); break
+          case "clear-all":       h.onClearAll?.(); break
+          case "play-sound":      h.onPlaySound?.(msg.id); break
+          case "chat":            h.onChat?.(msg); break
+          case "asset-put":       h.onAssetPut?.(msg.asset); break
+          case "asset-del":       h.onAssetDel?.(msg.id); break
+          case "stream-set":      h.onStreamSet?.(msg.stream); break
+        }
+      }
+
+      const reconnect = () => {
+        clearInterval(ping)
+        setConnected(false)
+        if (closed) return
+        // Back off, but stay responsive: a reload should rejoin in a second, not
+        // after the socket has been dead for a while.
+        const delay = Math.min(500 * 2 ** attempt++, 5000)
+        retry = setTimeout(connect, delay)
+      }
+
+      ws.onclose = reconnect
+      ws.onerror = () => ws.close()
     }
 
-    ws.onmessage = (e) => {
-      let msg
-      try {
-        msg = JSON.parse(e.data)
-      } catch {
-        return
-      }
-      const h = handlersRef.current
-      if (msg.type === "play") h.onPlay?.(msg.time)
-      if (msg.type === "pause") h.onPause?.(msg.time)
-      if (msg.type === "seek") h.onSeek?.(msg.time)
-      if (msg.type === "video-url") h.onVideoUrl?.(msg.url)
-      if (msg.type === "state") h.onState?.(msg)
-      if (msg.type === "viewers-update") h.onViewersUpdate?.(msg.viewers)
-      if (msg.type === "set-clip") h.onClipUpdate?.(msg.clip)
-    }
-
-    const ping = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN)
-        ws.send(JSON.stringify({ type: "ping" }))
-    }, 25_000)
+    connect()
 
     return () => {
+      closed = true
       clearInterval(ping)
-      ws.close()
+      clearTimeout(retry)
+      const w = wsRef.current
+      if (w) {
+        w.onclose = null
+        w.close()
+      }
+      setConnected(false)
     }
-  }, [roomId, host])
+  }, [roomId])
 
   const send = useCallback((payload) => {
     const w = wsRef.current
     if (w?.readyState === WebSocket.OPEN) w.send(JSON.stringify(payload))
   }, [])
 
-  const broadcast = useCallback(
-    (type, time) => send({ type, roomId, time }),
-    [roomId, send],
-  )
-  const broadcastUrl = useCallback(
-    (url) => send({ type: "video-url", roomId, url }),
-    [roomId, send],
-  )
-  const sendClip = useCallback(
-    (targetViewerId, clip) =>
-      send({ type: "set-clip", roomId, targetViewerId, clip }),
-    [roomId, send],
-  )
+  const putWidget = useCallback((widget) => send({ type: "widget-put", widget }), [send])
+  const deleteWidget = useCallback((id) => send({ type: "widget-del", id }), [send])
+  const playSound = useCallback((id) => send({ type: "play-sound", id }), [send])
+  const putAsset = useCallback((asset) => send({ type: "asset-put", asset }), [send])
+  const deleteAsset = useCallback((id) => send({ type: "asset-del", id }), [send])
+  const setStream = useCallback((stream) => send({ type: "stream-set", stream }), [send])
+  const clearAll = useCallback(() => send({ type: "clear-all" }), [send])
+  const reorderWidgets = useCallback((order) => send({ type: "widget-reorder", order }), [send])
+  const sendChat = useCallback((text) => send({ type: "chat", text }), [send])
 
-  return { broadcast, broadcastUrl, send, sendClip }
+  return { connected, send, putWidget, deleteWidget, playSound, putAsset, deleteAsset, setStream, clearAll, reorderWidgets, sendChat }
 }

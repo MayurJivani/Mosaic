@@ -1,0 +1,18 @@
+---
+import Layout from "../layouts/Layout.astro"
+import OverlayCanvas from "../components/OverlayCanvas"
+import "../styles/global.css"
+---
+<Layout title="MOSAIC — overlay" bodyClass="overlay">
+  {/*
+    OBS composites this page over the scene, and the page's backdrop comes from
+    the ROOT element — styling only `body` leaves `html` opaque, which lands on
+    stream as a black rectangle over everything. Both have to go, and it is done
+    here rather than with `:has()` in global.css because OBS ships an older CEF.
+  */}
+  <style is:global>
+    html, body.overlay { background: transparent !important; }
+    body.overlay::after { display: none !important; }
+  </style>
+  <OverlayCanvas client:only="react" />
+</Layout>
