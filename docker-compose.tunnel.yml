@@ -44,7 +44,12 @@ services:
     restart: unless-stopped
     # Token comes from the dashboard when you create the tunnel. Put it in a
     # .env file next to this one; never commit it.
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    #
+    # The missing token surfaces in this container's logs rather than as a `:?`
+    # guard, because Compose interpolates the whole file even when only the
+    # mosaic service is being brought up — and a box with its own cloudflared
+    # never sets the variable at all.
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-unset--put-CLOUDFLARE_TUNNEL_TOKEN-in-.env}
     depends_on:
       - mosaic
 
