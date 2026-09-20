@@ -46,6 +46,14 @@ const JOIN_WINDOW_MS = Number(process.env.MOSAIC_JOIN_WINDOW_MS ?? 10_000)
 const MAX_WS_PAYLOAD = Number(process.env.MOSAIC_MAX_WS_PAYLOAD ?? 512 * 1024) // bytes
 const MAX_UPLOAD_BYTES = Number(process.env.MOSAIC_MAX_UPLOAD_BYTES ?? 2 * 1024 * 1024 * 1024)
 const MAX_WIDGETS_PER_ROOM = Number(process.env.MOSAIC_MAX_WIDGETS ?? 400)
+/**
+ * Behind a tunnel or reverse proxy every connection arrives from the proxy, so
+ * the per-IP rate limit would put every mod and every overlay in one bucket.
+ * Opt-in, never automatic: trusting a client-supplied forwarding header on a
+ * directly-reachable relay lets anyone claim a fresh IP per request and walk
+ * straight through the limit.
+ */
+const TRUST_PROXY = /^(1|true|yes)$/i.test(process.env.MOSAIC_TRUST_PROXY ?? "")
 const MAX_ASSETS_PER_ROOM = Number(process.env.MOSAIC_MAX_ASSETS ?? 500)
 const SESSION_TTL_MS = Number(process.env.MOSAIC_SESSION_TTL_MS ?? 30 * 24 * 60 * 60 * 1000) // 30d sliding
 const SESSION_REFRESH_MS = 12 * 60 * 60 * 1000 // sliding refresh on use after this idle gap
@@ -338,6 +346,19 @@ function clearSession(res, sid) {
 
 // ── Per-IP join rate limit ────────────────────────────────────────────────────
 
+/** The address to rate-limit against, honouring the proxy only when trusted. */
+function clientIp(req) {
+  const direct = req?.socket?.remoteAddress?.replace(/^::ffff:/, "") ?? "?"
+  if (!TRUST_PROXY) return direct
+  // Cloudflare rewrites CF-Connecting-IP at its edge on every request, so when
+  // the tunnel is the only way in a client cannot forge it.
+  const cf = req.headers["cf-connecting-ip"]
+  if (typeof cf === "string" && cf.trim()) return cf.trim()
+  const xff = req.headers["x-forwarded-for"]
+  if (typeof xff === "string" && xff.trim()) return xff.split(",")[0].trim()
+  return direct
+}
+
 /** @type {Map<string, number[]>} */
 const joinerHits = new Map()
 
@@ -378,7 +399,7 @@ function toOverlays(room, payload) {
 const http = createServer((req, res) => {
   const host = req.headers.host ?? "localhost"
   const parsed = new URL(req.url ?? "/", `http://${host}`)
-  const ip = req.socket.remoteAddress?.replace(/^::ffff:/, "") ?? "?"
+  const ip = clientIp(req)
 
   const applyBase = () => {
     for (const [k, v] of Object.entries(WITH_SECURITY)) res.setHeader(k, v)
@@ -622,7 +643,7 @@ const wss = new WebSocketServer({
 })
 
 wss.on("connection", (ws, req) => {
-  const ip = req.socket.remoteAddress?.replace(/^::ffff:/, "") ?? "?"
+  const ip = clientIp(req)
   ws.isAlive = true
   ws.on("pong", () => { ws.isAlive = true })
 

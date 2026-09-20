@@ -1,0 +1,22 @@
+http://mosaic.futile.studio {
+	encode zstd gzip
+
+	# Cloudflare refuses request bodies over 100 MB on Free, Pro and Business,
+	# and that 413 never reaches the relay. MOSAIC_MAX_UPLOAD_BYTES in
+	# docker-compose.tunnel.yml is set to the same number — keep the two in step
+	# so an oversized clip fails here with a clear answer, not at the edge.
+	request_body {
+		max_size 100MB
+	}
+
+	# No blanket Cache-Control here, unlike the static sites on this box: the
+	# relay already sends no-cache for HTML and immutable for the hashed assets.
+	# Overriding it would throw away the asset caching to fix a problem that is
+	# already fixed.
+	reverse_proxy localhost:4322 {
+		# The mod board, the overlay and every live update share one long-lived
+		# WebSocket. Left buffered, mods drag a widget and the stream shows it
+		# whenever something else happens to flush.
+		flush_interval -1
+	}
+}

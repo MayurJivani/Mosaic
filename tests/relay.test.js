@@ -677,3 +677,95 @@ test("the overlay is never handed the clip library", async () => {
   const o = await overlayIn(roomId)
   assert.equal(o.state.assets, undefined, "overlay state must not carry the library")
 })
+
+// ── client IP behind a tunnel / reverse proxy ────────────────────────────────
+
+/** Spawn a second relay with its own env, on its own port. */
+async function spawnRelay(env = {}) {
+  const srv = net.createServer()
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res))
+  const port = srv.address().port
+  await new Promise((res) => srv.close(res))
+  const dir = mkdtempSync(path.join(tmpdir(), "mosaic-ip-"))
+  const proc = spawn(process.execPath, ["server/index.js"], {
+    env: { ...process.env, MOSAIC_PORT: String(port), MOSAIC_UPLOAD_DIR: dir, ...env },
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  proc.stdout.on("data", () => {})
+  proc.stderr.on("data", () => {})
+  const base = `http://127.0.0.1:${port}`
+  for (let i = 0; i < 100; i++) {
+    try { await fetch(`${base}/net`); break } catch { await sleep(50) }
+  }
+  return { port, base, dir, kill: () => { proc.kill("SIGKILL"); rmSync(dir, { recursive: true, force: true }) } }
+}
+
+/** Join once as an overlay, carrying the given headers. Returns what came back. */
+function joinWithHeaders(port, roomId, headers) {
+  return new Promise(async (resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers })
+    const inbox = []
+    ws.on("message", (d) => inbox.push(JSON.parse(d.toString())))
+    ws.on("open", () => ws.send(JSON.stringify({ type: "join", roomId, role: "overlay" })))
+    ws.on("error", () => {})
+    setTimeout(() => {
+      ws.terminate()
+      resolve(inbox.find((m) => m.type === "state") ? "state" : inbox.find((m) => m.type === "error")?.message ?? "nothing")
+    }, 200)
+  })
+}
+
+test("a forwarded IP is ignored unless the proxy is explicitly trusted", async () => {
+  // Otherwise anyone reaching the relay directly claims a fresh IP per request
+  // and walks straight through the join limit.
+  const relay = await spawnRelay({ MOSAIC_MAX_JOIN_RATE: "3" })
+  try {
+    const { roomId } = await (await fetch(`${relay.base}/room`, { method: "POST" })).json()
+    const results = []
+    for (let i = 0; i < 5; i++) {
+      results.push(await joinWithHeaders(relay.port, roomId, { "CF-Connecting-IP": `9.9.9.${i}` }))
+    }
+    assert.deepEqual(results.slice(0, 3), ["state", "state", "state"])
+    assert.ok(results.slice(3).every((r) => r === "slow down"),
+      `spoofed headers bypassed the limit: ${JSON.stringify(results)}`)
+  } finally {
+    relay.kill()
+  }
+})
+
+test("behind a trusted tunnel each viewer gets its own rate-limit budget", async () => {
+  // Every connection arrives from the tunnel, so without this one mod joining
+  // repeatedly would lock out every other mod and the overlay too.
+  const relay = await spawnRelay({ MOSAIC_MAX_JOIN_RATE: "3", MOSAIC_TRUST_PROXY: "1" })
+  try {
+    const { roomId } = await (await fetch(`${relay.base}/room`, { method: "POST" })).json()
+
+    // One client burns its own budget...
+    const heavy = []
+    for (let i = 0; i < 5; i++) {
+      heavy.push(await joinWithHeaders(relay.port, roomId, { "CF-Connecting-IP": "203.0.113.7" }))
+    }
+    assert.ok(heavy.slice(3).every((r) => r === "slow down"), "the noisy client should be throttled")
+
+    // ...without taking anyone else down with it.
+    const other = await joinWithHeaders(relay.port, roomId, { "CF-Connecting-IP": "203.0.113.8" })
+    assert.equal(other, "state", "a different viewer must not inherit someone else's throttle")
+  } finally {
+    relay.kill()
+  }
+})
+
+test("X-Forwarded-For is honoured when trusted, first hop only", async () => {
+  const relay = await spawnRelay({ MOSAIC_MAX_JOIN_RATE: "2", MOSAIC_TRUST_PROXY: "1" })
+  try {
+    const { roomId } = await (await fetch(`${relay.base}/room`, { method: "POST" })).json()
+    const hdr = { "X-Forwarded-For": "198.51.100.5, 10.0.0.1" }
+    assert.equal(await joinWithHeaders(relay.port, roomId, hdr), "state")
+    assert.equal(await joinWithHeaders(relay.port, roomId, hdr), "state")
+    assert.equal(await joinWithHeaders(relay.port, roomId, hdr), "slow down")
+    // A different first hop is a different client.
+    assert.equal(await joinWithHeaders(relay.port, roomId, { "X-Forwarded-For": "198.51.100.6" }), "state")
+  } finally {
+    relay.kill()
+  }
+})

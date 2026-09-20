@@ -1,0 +1,52 @@
+# mosaic.futile.studio via Cloudflare Tunnel.
+#
+# cloudflared dials out to Cloudflare, so nothing is exposed inbound and no
+# ports are published. Cloudflare terminates TLS at its edge, which makes the
+# Caddy service in docker-compose.yml redundant — use this file instead of it,
+# not alongside it.
+#
+#   docker compose -f docker-compose.tunnel.yml up -d --build
+#
+# In the Cloudflare dashboard, point the tunnel's public hostname
+# mosaic.futile.studio at the service URL  http://mosaic:4322
+#
+# On a box that already runs its own cloudflared and reverse proxy, bring up the
+# relay alone and let the existing edge reach it on 127.0.0.1:4322 — see
+# deploy/install.sh:
+#
+#   docker compose -f docker-compose.tunnel.yml up -d --build mosaic
+services:
+  mosaic:
+    build: .
+    restart: unless-stopped
+    environment:
+      PORT: "4322"
+      # Every request now arrives from cloudflared, so without this the per-IP
+      # join limit would put every mod and the overlay in a single bucket and
+      # throttle them collectively. Safe here precisely because the tunnel is
+      # the only way in: Cloudflare rewrites CF-Connecting-IP at its edge.
+      MOSAIC_TRUST_PROXY: "1"
+      # Cloudflare caps request bodies at 100 MB on Free, Pro and Business.
+      # A larger ceiling here would only fail at the edge with a 413 that never
+      # reaches the relay, so keep them in step.
+      MOSAIC_MAX_UPLOAD_BYTES: "104857600"
+    volumes:
+      # Without this a redeploy erases every mod's clip library.
+      - mosaic-uploads:/app/uploads
+    ports:
+      # Loopback only: nothing inbound is exposed either way, but a host that
+      # already terminates TLS needs an address it can proxy to, and a container
+      # IP is not stable across rebuilds.
+      - "127.0.0.1:4322:4322"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    # Token comes from the dashboard when you create the tunnel. Put it in a
+    # .env file next to this one; never commit it.
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    depends_on:
+      - mosaic
+
+volumes:
+  mosaic-uploads:

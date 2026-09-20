@@ -105,6 +105,46 @@ docker compose up -d --build
 Point `mosaic.futile.studio` at the host with an `A` record — Caddy fetches the
 certificate on first request and upgrades the WebSocket on its own.
 
+### Or via Cloudflare Tunnel
+
+No open ports, no certificate to manage — `cloudflared` dials out and Cloudflare
+terminates TLS at its edge, which makes the Caddy service redundant. Use this
+file *instead of* the default one.
+
+```bash
+echo "CLOUDFLARE_TUNNEL_TOKEN=..." > .env
+docker compose -f docker-compose.tunnel.yml up -d --build
+```
+
+In the dashboard, point the tunnel's public hostname `mosaic.futile.studio` at
+the service URL **`http://mosaic:4322`**.
+
+Two things the tunnel changes, both already set in that compose file:
+
+- **`MOSAIC_TRUST_PROXY=1`.** Every request now arrives from `cloudflared`, so
+  without it the per-IP join limit puts every mod and the overlay in one bucket
+  and throttles them together. It is opt-in because trusting a forwarding header
+  on a directly-reachable relay would let anyone claim a fresh IP per request.
+- **Uploads cap at 100 MB.** Cloudflare refuses larger request bodies on Free,
+  Pro and Business, and that 413 never reaches the relay — so the ceiling is
+  lowered to match rather than failing confusingly at the edge.
+
+### Onto a box that already has an edge
+
+If the host already runs its own `cloudflared` and reverse proxy for other
+sites, it needs neither of the services above — only the relay, reachable on
+loopback for the proxy already there.
+
+```bash
+docker compose -f docker-compose.tunnel.yml up -d --build mosaic
+sudo deploy/install.sh
+```
+
+`deploy/install.sh` swaps a `mosaic.futile.studio` block into the system
+`Caddyfile` and reloads it. That is only half the route: the tunnel's ingress
+for the hostname has to point at `http://localhost:80` in the Cloudflare
+dashboard, which no script on the box can do.
+
 **HTTPS isn't optional.** Twitch refuses to embed into an insecure page, and the
 mod session cookie is `SameSite=Lax` on a single origin.
 
