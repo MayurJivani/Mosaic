@@ -31,3 +31,6 @@ uploads/
 # built output
 dist/
 .codegraph/
+
+# Claude Code and local tooling
+.claude/

@@ -12,6 +12,9 @@
 ![WebSockets](https://img.shields.io/badge/WebSockets-relay-010101?style=flat-square)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
 [![Last commit](https://img.shields.io/github/last-commit/MayurJivani/Mosaic?style=flat-square)](https://github.com/MayurJivani/Mosaic/commits/main)
+[![Stars](https://img.shields.io/github/stars/MayurJivani/Mosaic?style=flat-square)](https://github.com/MayurJivani/Mosaic/stargazers)
+[![Issues](https://img.shields.io/github/issues/MayurJivani/Mosaic?style=flat-square)](https://github.com/MayurJivani/Mosaic/issues)
+![Code size](https://img.shields.io/github/languages/code-size/MayurJivani/Mosaic?style=flat-square)
 
 </div>
 
