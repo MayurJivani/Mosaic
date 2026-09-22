@@ -15,6 +15,9 @@
 [![Stars](https://img.shields.io/github/stars/MayurJivani/Mosaic?style=flat-square)](https://github.com/MayurJivani/Mosaic/stargazers)
 [![Issues](https://img.shields.io/github/issues/MayurJivani/Mosaic?style=flat-square)](https://github.com/MayurJivani/Mosaic/issues)
 ![Code size](https://img.shields.io/github/languages/code-size/MayurJivani/Mosaic?style=flat-square)
+![babysitting](https://img.shields.io/badge/babysitting-not%20required-ff69b4?style=flat-square)
+![the overlay](https://img.shields.io/badge/the%20overlay-draws%2C%20never%20decides-1abc9c?style=flat-square)
+![airhorns](https://img.shields.io/badge/airhorns-on%20tap-f39c12?style=flat-square)
 
 </div>
 
