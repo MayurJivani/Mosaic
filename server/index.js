@@ -81,6 +81,9 @@ const MIME = {
   ".webp": "image/webp",
   ".avif": "image/avif",
   ".svg": "image/svg+xml",
+  // Without this the favicon falls through to application/octet-stream, which
+  // some browsers decline to draw rather than sniff.
+  ".ico": "image/x-icon",
   ".css": "text/css",
   ".js": "application/javascript",
   ".html": "text/html",
@@ -422,14 +425,30 @@ const http = createServer((req, res) => {
       return
     }
     let filePath = null
+    // Only Astro's hashed output is safe to cache forever; see serveFile.
+    let immutable = false
     if (parsed.pathname === "/" || parsed.pathname === "/index.html") {
       filePath = path.join(DIST, "index.html")
     } else if (parsed.pathname === "/overlay" || parsed.pathname === "/overlay/") {
       filePath = path.join(DIST, "overlay", "index.html")
-    } else if (parsed.pathname.startsWith("/_astro/")) {
+      // Uploads have extensions too and are handled further down, out of the
+      // upload directory — matching them here looks for a mod's clip in dist/.
+    } else if (!parsed.pathname.startsWith("/files/") && /\.[a-z0-9]+$/i.test(parsed.pathname)) {
+      /**
+       * Anything else built into dist/: hashed assets, the favicons, whatever
+       * gets added later. The old allowlist was /_astro/ only, so /favicon.ico
+       * 404'd in production no matter what the page linked.
+       *
+       * Needing an extension keeps a mistyped room URL from reaching for a
+       * directory, and dist/ is build output with nothing private in it.
+       * Traversal is covered twice over: `new URL` has already resolved any
+       * %2e%2e segments out of pathname, and serveDist confines the resolved
+       * path to DIST.
+       */
       filePath = path.join(DIST, parsed.pathname.replace(/^\/+/, ""))
+      immutable = parsed.pathname.startsWith("/_astro/")
     }
-    if (filePath) return serveDist(req, res, filePath)
+    if (filePath) return serveDist(req, res, filePath, immutable)
   }
 
   if (req.method === "POST" && parsed.pathname === "/room") {
@@ -521,7 +540,7 @@ const http = createServer((req, res) => {
 })
 
 /** Serve a single built static file with the MIME map + security headers + ranges. */
-function serveDist(req, res, filePath) {
+function serveDist(req, res, filePath, immutable = false) {
   const resolved = path.resolve(filePath)
   if (!resolved.startsWith(DIST)) {
     res.writeHead(404, { "Content-Type": "text/plain" }).end("not found")
@@ -531,10 +550,10 @@ function serveDist(req, res, filePath) {
   // was only ever delivered on JSON endpoints, where it does nothing — the board
   // and the overlay ran with no CSP, no nosniff and no framing rules at all.
   for (const [k, v] of Object.entries(SECURITY)) res.setHeader(k, v)
-  serveFile(req, res, resolved)
+  serveFile(req, res, resolved, immutable)
 }
 
-function serveFile(req, res, filePath) {
+function serveFile(req, res, filePath, immutable = true) {
   let stat
   try {
     stat = statSync(filePath)
@@ -552,13 +571,20 @@ function serveFile(req, res, filePath) {
 
   /**
    * Hashed assets and uploaded files are content-unique by name, so they can be
-   * cached forever. HTML cannot: it is the thing that names the hashed assets,
-   * so caching it immutably pins every mod to the version they first loaded —
-   * a deploy would reach nobody until the cache expired a year later.
+   * cached forever — `immutable` defaults true because /files/* is exactly that
+   * case. HTML cannot: it is the thing that names the hashed assets, so caching
+   * it immutably pins every mod to the version they first loaded — a deploy
+   * would reach nobody until the cache expired a year later.
+   *
+   * Stable-named statics like favicon.ico sit between the two. A year is wrong
+   * (the name never changes, so a new icon would never arrive) and no-cache is
+   * wasteful with no validator on these responses, so they get a day.
    */
   const cacheControl = filePath.endsWith(".html")
     ? "no-cache"
-    : "public, max-age=31536000, immutable"
+    : immutable
+      ? "public, max-age=31536000, immutable"
+      : "public, max-age=86400"
 
   if (range) {
     const m = /bytes=(\d*)-(\d*)/.exec(range)

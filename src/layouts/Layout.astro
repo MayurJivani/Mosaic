@@ -9,6 +9,13 @@ const { title = "MOSAIC — Futile Studio", bodyClass = "" } = Astro.props
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="MOSAIC — mod-controlled stream overlay. Drag GIFs, clips, text, emojis, and sounds onto your OBS overlay in real time." />
     <title>{title}</title>
+    <!-- The .ico carries 16/32/48 for the tab strip and pinned shortcuts; the
+         SVG is preferred where it is understood and scales past all of them.
+         Neither was linked before, so this only ever worked by the root-path
+         convention — which a subpath deploy or the overlay route does not get. -->
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0D0F14" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />

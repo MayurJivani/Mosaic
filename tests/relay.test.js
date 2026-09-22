@@ -769,3 +769,52 @@ test("X-Forwarded-For is honoured when trusted, first hop only", async () => {
     relay.kill()
   }
 })
+
+// ── static files out of dist/ ────────────────────────────────────────────────
+
+test("the favicon is served, and typed as an icon", async () => {
+  // The static allowlist was /_astro/ only, so every root asset 404'd in
+  // production no matter what the page linked. And an .ico missing from the
+  // MIME map arrives as application/octet-stream, which some browsers decline
+  // to draw rather than sniff.
+  const r = await fetch(`${HTTP}/favicon.ico`)
+  assert.equal(r.status, 200)
+  assert.equal(r.headers.get("content-type"), "image/x-icon")
+  assert.ok(Number(r.headers.get("content-length")) > 0, "favicon must not be empty")
+
+  const svg = await fetch(`${HTTP}/favicon.svg`)
+  assert.equal(svg.status, 200)
+  assert.equal(svg.headers.get("content-type"), "image/svg+xml")
+})
+
+test("only content-addressed assets are cached forever", async () => {
+  // favicon.ico keeps its name across deploys, so caching it immutably for a
+  // year means a replacement icon reaches nobody, ever.
+  const icon = await fetch(`${HTTP}/favicon.ico`)
+  assert.ok(!/immutable/.test(icon.headers.get("cache-control") ?? ""),
+    `stable-named asset must not be immutable: ${icon.headers.get("cache-control")}`)
+
+  // The hashed bundles are safe to pin, and must stay pinned.
+  const html = await (await fetch(`${HTTP}/`)).text()
+  const hashed = html.match(/\/_astro\/[^"']+/)?.[0]
+  assert.ok(hashed, "index.html should reference a hashed asset")
+  const asset = await fetch(`${HTTP}${hashed}`)
+  assert.equal(asset.status, 200)
+  assert.match(asset.headers.get("cache-control") ?? "", /immutable/)
+
+  // HTML names the hashed assets, so it can never be the stale one.
+  assert.equal((await fetch(`${HTTP}/`)).headers.get("cache-control"), "no-cache")
+})
+
+test("serving statics by path does not expose the repo", async () => {
+  // Widening past /_astro/ must not turn the relay into a file server for the
+  // checkout: dist/ is build output, everything above it is not.
+  for (const target of ["/package.json", "/server/index.js", "/.env", "/Dockerfile"]) {
+    const r = await fetch(`${HTTP}${target}`)
+    assert.equal(r.status, 404, `${target} must not be served`)
+  }
+  for (const target of ["/../package.json", "/..%2Fpackage.json", "/%2e%2e/%2e%2e/etc/passwd"]) {
+    const raw = await rawGet(target)
+    assert.match(raw.split("\r\n")[0], /40[0-9]/, `${target} must not be served: ${raw.split("\r\n")[0]}`)
+  }
+})
