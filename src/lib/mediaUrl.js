@@ -1,10 +1,12 @@
 /**
- * Mosaic file + WS server share one origin (port 4322 by default).
+ * Mosaic file + WS server share one origin.
  * URLs must never pin "localhost" from the host machine — phones on the LAN
  * need the same path resolved against *their* page hostname (or PUBLIC_WS_URL).
  */
 
 const RELAY_PORT = 4322
+/** Astro's own dev/preview server — the one case where it is not the relay. */
+const ASTRO_PORT = 4321
 
 function wsUrlToHttp(wsUrl) {
   if (wsUrl.startsWith("wss://")) return "https://" + wsUrl.slice(6)
@@ -22,9 +24,18 @@ function httpUrlToWs(httpUrl) {
 export function getFileServerOrigin() {
   if (import.meta.env?.PUBLIC_WS_URL) return wsUrlToHttp(import.meta.env.PUBLIC_WS_URL)
   if (typeof window !== "undefined") {
+    const { protocol, hostname, port, origin } = window.location
+    // In production the relay serves this very page, so its origin is already
+    // the right answer — port and all. Pinning :4322 onto the hostname instead
+    // sent the browser to a port no edge publishes: behind Cloudflare the page
+    // loads over 443 and the socket then reaches for :4322 and never connects.
+    //
+    // Astro's dev/preview server is the one case where the page is not the
+    // relay: it serves on its own port with the relay a separate process.
+    if (port !== String(ASTRO_PORT)) return origin
     // Match the page's scheme so an https tunnel doesn't trip mixed-content blocking.
-    const scheme = window.location.protocol === "https:" ? "https" : "http"
-    return `${scheme}://${window.location.hostname}:${RELAY_PORT}`
+    const scheme = protocol === "https:" ? "https" : "http"
+    return `${scheme}://${hostname}:${RELAY_PORT}`
   }
   return `http://localhost:${RELAY_PORT}`
 }
