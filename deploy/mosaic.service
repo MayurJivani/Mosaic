@@ -1,0 +1,22 @@
+[Unit]
+Description=mosaic (stream overlay board)
+After=network-online.target
+
+[Service]
+User=icarusfalls
+WorkingDirectory=/opt/apps/Mosaic
+# Optional overrides only; nothing here is secret.
+EnvironmentFile=-/etc/apps/mosaic.env
+Environment=NODE_ENV=production PORT=4322 MOSAIC_TRUST_PROXY=1 MOSAIC_MAX_UPLOAD_BYTES=104857600
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=512M
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
