@@ -150,9 +150,32 @@ test("a room is created with a token and its canvas size sticks", async () => {
   assert.equal(state.canvasH, 2560)
 })
 
+/** A room this file's uploads belong to; uploads are for its mods only. */
+let mod
+async function upload(query, init = {}) {
+  mod ??= await (await fetch(`${HTTP}/room`, { method: "POST" })).json()
+  return fetch(`${HTTP}/upload?${query}`, {
+    ...init,
+    headers: { "x-room": mod.roomId, "x-code": mod.token, ...init.headers },
+  })
+}
+
+test("uploads are for a room's mods, media only, and served inert", async () => {
+  const anon = await fetch(`${HTTP}/upload?name=a.mp4`, { method: "POST", body: "x" })
+  assert.equal(anon.status, 401)
+  const wrong = await upload("name=a.mp4", { method: "POST", body: "x", headers: { "x-code": "nope" } })
+  assert.equal(wrong.status, 401)
+  for (const name of ["a.html", "a.svg", "a.js"]) {
+    assert.equal((await upload(`name=${name}`, { method: "POST", body: "<script>1</script>" })).status, 415, name)
+  }
+  const { url } = await (await upload("name=ok.png", { method: "POST", body: "x" })).json()
+  const served = await fetch(`${HTTP}${url}`)
+  assert.match(served.headers.get("content-security-policy"), /^sandbox/)
+})
+
 test("upload stores a file and returns a path-only URL", async () => {
   const body = Buffer.from("fake video bytes")
-  const res = await fetch(`${HTTP}/upload?name=my%20clip.mp4`, { method: "POST", body })
+  const res = await upload(`name=my%20clip.mp4`, { method: "POST", body })
   assert.equal(res.status, 200)
   const json = await res.json()
   assert.match(json.url, /^\/files\/\d+_[0-9a-f]{6}_my_clip\.mp4$/)
@@ -161,14 +184,14 @@ test("upload stores a file and returns a path-only URL", async () => {
 
 test("uploaded file streams back byte-identical", async () => {
   const body = Buffer.from("0123456789abcdef")
-  const { url } = await (await fetch(`${HTTP}/upload?name=x.mp4`, { method: "POST", body })).json()
+  const { url } = await (await upload(`name=x.mp4`, { method: "POST", body })).json()
   const got = Buffer.from(await (await fetch(HTTP + url)).arrayBuffer())
   assert.deepEqual(got, body)
 })
 
 test("range requests work — playback in browsers needs them", async () => {
   const body = Buffer.from("0123456789abcdef")
-  const { url } = await (await fetch(`${HTTP}/upload?name=r.mp4`, { method: "POST", body })).json()
+  const { url } = await (await upload(`name=r.mp4`, { method: "POST", body })).json()
 
   const res = await fetch(HTTP + url, { headers: { Range: "bytes=4-8" } })
   assert.equal(res.status, 206)
@@ -185,7 +208,7 @@ test("range requests work — playback in browsers needs them", async () => {
 })
 
 test("an unsatisfiable range is refused, not silently clamped", async () => {
-  const { url } = await (await fetch(`${HTTP}/upload?name=u.mp4`, { method: "POST", body: Buffer.from("abc") })).json()
+  const { url } = await (await upload(`name=u.mp4`, { method: "POST", body: Buffer.from("abc") })).json()
   const res = await fetch(HTTP + url, { headers: { Range: "bytes=99-200" } })
   assert.equal(res.status, 416)
 })
@@ -212,7 +235,7 @@ test("unknown routes 404", async () => {
 
 test("upload names cannot escape the upload directory", async () => {
   for (const name of ["../escaped.mp4", "..%2f..%2fescaped.mp4", "/etc/passwd", "..", "."]) {
-    const res = await fetch(`${HTTP}/upload?name=${encodeURIComponent(name)}`, {
+    const res = await upload(`name=${encodeURIComponent(name)}`, {
       method: "POST",
       body: Buffer.from("x"),
     })
@@ -469,8 +492,8 @@ test("two mods uploading the same filename do not clobber each other", async () 
   // Mods drop files called "clip.mp4" and "image.png" constantly. If the second
   // overwrote the first, every widget already pointing at it would silently
   // change content mid-stream.
-  const a = await (await fetch(`${HTTP}/upload?name=clip.mp4`, { method: "POST", body: Buffer.from("AAAA") })).json()
-  const b = await (await fetch(`${HTTP}/upload?name=clip.mp4`, { method: "POST", body: Buffer.from("BBBB") })).json()
+  const a = await (await upload(`name=clip.mp4`, { method: "POST", body: Buffer.from("AAAA") })).json()
+  const b = await (await upload(`name=clip.mp4`, { method: "POST", body: Buffer.from("BBBB") })).json()
   assert.notEqual(a.url, b.url)
   assert.equal(await (await fetch(HTTP + a.url)).text(), "AAAA")
   assert.equal(await (await fetch(HTTP + b.url)).text(), "BBBB")
@@ -479,7 +502,7 @@ test("two mods uploading the same filename do not clobber each other", async () 
 test("an upload survives the response completing", async () => {
   // Regression: cleanup was wired to res "close", which also fires on success,
   // so every finished upload was deleted a tick after it was stored.
-  const { url } = await (await fetch(`${HTTP}/upload?name=keep.png`, { method: "POST", body: Buffer.from("keepme") })).json()
+  const { url } = await (await upload(`name=keep.png`, { method: "POST", body: Buffer.from("keepme") })).json()
   await sleep(250)
   const res = await fetch(HTTP + url)
   assert.equal(res.status, 200)

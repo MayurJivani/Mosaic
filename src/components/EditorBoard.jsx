@@ -462,7 +462,7 @@ export default function EditorBoard() {
   const widgetsRef = useRef(widgets)
   widgetsRef.current = widgets
   const canvasRef = useRef(null)
-  const { upload } = useUpload()
+  const { upload } = useUpload({ room, code })
 
   const sync = useRoom({
     roomId: room,

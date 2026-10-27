@@ -89,6 +89,12 @@ const MIME = {
   ".html": "text/html",
 }
 
+const UPLOAD_TYPES = new Set(
+  Object.entries(MIME)
+    .filter(([, type]) => /^(image|audio|video)\//.test(type) && type !== "image/svg+xml")
+    .map(([ext]) => ext),
+)
+
 // Security headers on every response. CSP allows emote CDNs explicitly so
 // BTTV / 7TV / FFZ / Twitch emotes render and their APIs are reachable.
 const EMOTE_IMG_CDNS = "https://cdn.betterttv.net https://cdn.7tv.app https://cdn.frankerfacez.com https://static-cdn.jtvnw.net"
@@ -130,7 +136,7 @@ const SECURITY = {
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, X-Room, X-Code",
 }
 // CORS is ONLY for the cross-origin dev/overlay case (Astro on :4321 in dev,
 // OBS source on its own origin). Sessions never cross origins in production.
@@ -316,7 +322,9 @@ function cookieFrom(req) {
     if (i === -1) continue
     const name = part.slice(0, i).trim()
     const val = part.slice(i + 1).trim()
-    if (name === COOKIE) return decodeURIComponent(val)
+    if (name !== COOKIE) continue
+    // A malformed escape throws, and this runs inside socket and HTTP handlers.
+    try { return decodeURIComponent(val) } catch { return null }
   }
   return null
 }
@@ -468,6 +476,11 @@ const http = createServer((req, res) => {
   // ── sessions: mod remembers itself; sign-out kills the cookie ─────────────
   if (req.method === "POST" && parsed.pathname === "/session") {
     applyBase()
+    // A wrong code here is a guess at the room token; same budget as joins.
+    if (!allowJoin(clientIp(req))) {
+      res.writeHead(429, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "slow down" }))
+      return
+    }
     let body = ""
     let tooBig = false
     req.on("data", (chunk) => {
@@ -507,6 +520,16 @@ const http = createServer((req, res) => {
 
   if (req.method === "POST" && parsed.pathname === "/upload") {
     applyBase()
+    // Mods only: the session cookie (production) or the room code (cross-origin
+    // dev), the same two proofs an editor socket needs. Open, this was 100 MB of
+    // free disk per request for anyone.
+    const roomId = String(req.headers["x-room"] ?? "")
+    const room = rooms.get(roomId)
+    const code = String(req.headers["x-code"] ?? "")
+    if (!room || !(sessionForRoom(req, roomId) || (room.token && safeEqual(code, room.token)))) {
+      res.writeHead(401, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "mods only" }))
+      return
+    }
     handleUpload(req, res, parsed)
     return
   }
@@ -531,6 +554,8 @@ const http = createServer((req, res) => {
       res.writeHead(404, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "not found" }))
       return
     }
+    // Inert whatever it is, including anything uploaded before the type check.
+    res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; media-src 'self'")
     serveFile(req, res, file)
     return
   }
@@ -625,6 +650,12 @@ function handleUpload(req, res, parsed) {
   // Unique prefix: two mods dropping "clip.mp4" must not overwrite each other
   // and silently repoint every widget already using the first one.
   const name = `${Date.now()}_${randomBytes(3).toString("hex")}_${safeName(parsed.searchParams.get("name"))}`
+  // Pictures, sound and video only. HTML, SVG or script here would be served
+  // from this origin, under a CSP that allows inline script.
+  if (!UPLOAD_TYPES.has(path.extname(name).toLowerCase())) {
+    res.writeHead(415, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "not a picture, sound or video" }))
+    return
+  }
   const dest = resolveUploadPath(name)
   if (!dest) {
     res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "bad filename" }))

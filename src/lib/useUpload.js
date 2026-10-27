@@ -1,7 +1,8 @@
 import { useState, useCallback } from "react"
 import { getFileServerOrigin } from "./mediaUrl"
 
-export function useUpload() {
+/** `room` and `code` prove to the relay that the uploader is a mod of that room. */
+export function useUpload({ room, code } = {}) {
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0) // 0–100
   const [error, setError] = useState(null)
@@ -41,6 +42,8 @@ export function useUpload() {
 
         xhr.onerror = () => reject(new Error("network error during upload"))
         xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream")
+        if (room) xhr.setRequestHeader("X-Room", room)
+        if (code) xhr.setRequestHeader("X-Code", code)
         xhr.send(file)
       })
 
@@ -55,7 +58,7 @@ export function useUpload() {
     } finally {
       setUploading(false)
     }
-  }, [])
+  }, [room, code])
 
   return { upload, uploading, progress, error }
 }
