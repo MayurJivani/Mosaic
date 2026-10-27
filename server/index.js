@@ -701,6 +701,8 @@ const wss = new WebSocketServer({
 })
 
 wss.on("connection", (ws, req) => {
+  // ws reports an oversized or malformed frame as an 'error' event and closes the socket itself; unheard, that event crashes the process.
+  ws.on("error", () => {})
   const ip = clientIp(req)
   ws.isAlive = true
   ws.on("pong", () => { ws.isAlive = true })

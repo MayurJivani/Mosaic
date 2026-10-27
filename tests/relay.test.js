@@ -846,3 +846,10 @@ test("serving statics by path does not expose the repo", async () => {
     assert.match(raw.split("\r\n")[0], /40[0-9]/, `${target} must not be served: ${raw.split("\r\n")[0]}`)
   }
 })
+
+test("an oversized socket frame closes that socket, not the server", async () => {
+  const ws = new WebSocket(WS, { headers: { origin: HTTP } })
+  ws.on("error", () => {})
+  await new Promise((r) => { ws.on("open", () => ws.send("x".repeat(2_000_000))); ws.on("close", r) })
+  assert.equal((await fetch(`${HTTP}/net`)).ok, true)
+})
