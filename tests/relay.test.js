@@ -228,6 +228,11 @@ test("/net reports LAN addresses", async () => {
   for (const ip of json.ips) assert.match(ip, /^\d+\.\d+\.\d+\.\d+$/)
 })
 
+test("/net hides LAN addresses from requests that came through Cloudflare", async () => {
+  const json = await (await fetch(`${HTTP}/net`, { headers: { "cf-connecting-ip": "203.0.113.5" } })).json()
+  assert.deepEqual(json.ips, [])
+})
+
 test("unknown routes 404", async () => {
   assert.equal((await fetch(`${HTTP}/bogus-route-xyz`)).status, 404)
   assert.equal((await fetch(`${HTTP}/files/nope.mp4`)).status, 404)

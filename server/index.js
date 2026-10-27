@@ -537,7 +537,8 @@ const http = createServer((req, res) => {
   if (req.method === "GET" && parsed.pathname === "/net") {
     applyBase()
     res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify({ ips: lanAddresses(), port: PORT }))
+    // Through Cloudflare the box's LAN addresses help nobody and map the network for anyone.
+    res.end(JSON.stringify({ ips: req.headers["cf-connecting-ip"] ? [] : lanAddresses(), port: PORT }))
     return
   }
 
