@@ -1,5 +1,5 @@
 http://mosaic.futile.studio {
-	encode zstd gzip
+	import common
 
 	# Cloudflare refuses request bodies over 100 MB on Free, Pro and Business,
 	# and that 413 never reaches the relay. MOSAIC_MAX_UPLOAD_BYTES in

@@ -3,20 +3,48 @@ Description=mosaic (stream overlay board)
 After=network-online.target
 
 [Service]
-User=icarusfalls
 WorkingDirectory=/opt/apps/Mosaic
 # Optional overrides only; nothing here is secret.
 EnvironmentFile=-/etc/apps/mosaic.env
-Environment=NODE_ENV=production PORT=4322 MOSAIC_TRUST_PROXY=1 MOSAIC_MAX_UPLOAD_BYTES=104857600
+Environment=NODE_ENV=production PORT=4322 MOSAIC_TRUST_PROXY=1 MOSAIC_MAX_UPLOAD_BYTES=104857600 MOSAIC_UPLOAD_DIR=/var/lib/mosaic/uploads
 ExecStart=/usr/bin/node server/index.js
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15
 MemoryMax=512M
-NoNewPrivileges=yes
-ProtectSystem=full
+StateDirectory=mosaic
+# --- least privilege: a throwaway user per start, no capabilities, read-only code ---
+DynamicUser=yes
+ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+NoNewPrivileges=yes
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK: os.networkInterfaces() (getifaddrs) needs it.
+RestrictAddressFamilies=AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+# A blocked call fails with EPERM instead of killing the process.
+SystemCallErrorNumber=EPERM
+UMask=0077
+# No MemoryDenyWriteExecute: V8's JIT needs writable+executable pages.
 
 [Install]
 WantedBy=multi-user.target
